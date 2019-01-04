@@ -2,18 +2,21 @@ package tars
 
 import (
 	"github.com/TarsCloud/TarsGo/tars/util/endpoint"
+	"time"
 )
 
 var svrCfg *serverConfig
 var cltCfg *clientConfig
 
+// GetServerConfig : Get server config
 func GetServerConfig() *serverConfig {
-	Init() //引用配置前先初始化应用
+	Init()
 	return svrCfg
 }
 
+// GetClientConfig : Get client config
 func GetClientConfig() *clientConfig {
-	Init() //引用配置前先初始化应用
+	Init()
 	return cltCfg
 }
 
@@ -29,7 +32,8 @@ type serverConfig struct {
 	App       string
 	Server    string
 	LogPath   string
-	LogSize   string
+	LogSize   uint64
+	LogNum    uint64
 	LogLevel  string
 	Version   string
 	LocalIP   string
@@ -38,13 +42,31 @@ type serverConfig struct {
 	config    string
 	notify    string
 	log       string
-	netThread int
 	Adapters  map[string]adapterConfig
 
 	Container   string
 	Isdocker    bool
 	Enableset   bool
 	Setdivision string
+	//add server timeout
+	AcceptTimeout time.Duration
+	ReadTimeout   time.Duration
+	WriteTimeout  time.Duration
+	HandleTimeout time.Duration
+	IdleTimeout   time.Duration
+	ZombileTimeout time.Duration
+	QueueCap      int
+	//add tcp config
+	TCPReadBuffer int
+	TCPWriteBuffer int
+	TCPNoDelay bool
+	//add routine number
+	MaxInvoke int32
+	//add adapter & report config
+	PropertyReportInterval time.Duration
+	StatReportInterval time.Duration
+	MainLoopTicker time.Duration
+
 }
 
 type clientConfig struct {
@@ -55,4 +77,13 @@ type clientConfig struct {
 	refreshEndpointInterval int
 	reportInterval          int
 	AsyncInvokeTimeout      int
+	//add client timeout
+	ClientQueueLen          int
+	ClientIdleTimeout       time.Duration
+	ClientReadTimeout	    time.Duration
+	ClientWriteTimeout      time.Duration
+	ReqDefaultTimeout       int32
+	ObjQueueMax             int32
+	AdapterProxyTicker      time.Duration
+	AdapterProxyResetCount  int	
 }
