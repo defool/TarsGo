@@ -8,13 +8,10 @@ import (
 	"time"
 )
 
-//TarsClientProtocol interface for handling tars client package.
 type TarsClientProtocol interface {
 	Recv(pkg []byte)
 	ParsePackage(buff []byte) (int, int)
 }
-
-//TarsClientConf is tars client side config
 type TarsClientConf struct {
 	Proto        string
 	ClientProto  TarsClientProtocol
@@ -24,7 +21,6 @@ type TarsClientConf struct {
 	WriteTimeout time.Duration
 }
 
-//TarsClient is struct for tars client.
 type TarsClient struct {
 	address string
 	//TODO remove it
@@ -47,7 +43,6 @@ type connection struct {
 	invokeNum int32
 }
 
-//NewTarsClient new tars client and init it .
 func NewTarsClient(address string, cp TarsClientProtocol, conf *TarsClientConf) *TarsClient {
 	if conf.QueueLen <= 0 {
 		conf.QueueLen = 100
@@ -58,7 +53,6 @@ func NewTarsClient(address string, cp TarsClientProtocol, conf *TarsClientConf) 
 	return tc
 }
 
-//Send sends the request to the server as []byte.
 func (tc *TarsClient) Send(req []byte) error {
 	w := tc.conn
 	if err := w.reConnect(); err != nil {
@@ -68,7 +62,6 @@ func (tc *TarsClient) Send(req []byte) error {
 	return nil
 }
 
-//Close close the client connection with the server.
 func (tc *TarsClient) Close() {
 	w := tc.conn
 	if !w.isClosed && w.conn != nil {
@@ -77,23 +70,28 @@ func (tc *TarsClient) Close() {
 	}
 }
 
-func (c *connection) send(conn net.Conn) {
+func (c *connection) send(conn net.Conn, connDone chan bool) {
 	var req []byte
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
 		select {
-		case req = <-c.tc.sendQueue: // Fetch jobs
-		case <-t.C:
-			if c.isClosed {
-				return
+		case <-connDone: // connection closed
+			return
+		default:
+			select {
+			case req = <-c.tc.sendQueue: // Fetch jobs
+			case <-t.C:
+				if c.isClosed {
+					return
+				}
+				// TODO: check one-way invoke for idle detect
+				if c.invokeNum == 0 && c.idleTime.Add(c.tc.conf.IdleTimeout).Before(time.Now()) {
+					c.close(conn)
+					return
+				}
+				continue
 			}
-			// TODO: check one-way invoke for idle detect
-			if c.invokeNum == 0 && c.idleTime.Add(c.tc.conf.IdleTimeout).Before(time.Now()) {
-				c.close(conn)
-				return
-			}
-			continue
 		}
 		atomic.AddInt32(&c.invokeNum, 1)
 		if c.tc.conf.WriteTimeout != 0 {
@@ -102,7 +100,8 @@ func (c *connection) send(conn net.Conn) {
 		c.idleTime = time.Now()
 		_, err := conn.Write(req)
 		if err != nil {
-			//TODO
+			//TODO add retry time
+			c.tc.sendQueue <- req
 			TLOG.Error("send request error:", err)
 			c.close(conn)
 			return
@@ -110,7 +109,10 @@ func (c *connection) send(conn net.Conn) {
 	}
 }
 
-func (c *connection) recv(conn net.Conn) {
+func (c *connection) recv(conn net.Conn, connDone chan bool) {
+	defer func() {
+		connDone <- true
+	}()
 	buffer := make([]byte, 1024*4)
 	var currBuffer []byte
 	var n int
@@ -133,7 +135,7 @@ func (c *connection) recv(conn net.Conn) {
 			if err == io.EOF {
 				TLOG.Debug("connection closed by remote:", conn.RemoteAddr())
 			} else {
-				TLOG.Error("read package error:", err)
+				TLOG.Error("read packge error:", err)
 			}
 			c.close(conn)
 			return
@@ -146,8 +148,8 @@ func (c *connection) recv(conn net.Conn) {
 			}
 			if status == PACKAGE_FULL {
 				atomic.AddInt32(&c.invokeNum, -1)
-				pkg := make([]byte, pkgLen-4)
-				copy(pkg, currBuffer[4:pkgLen])
+				pkg := make([]byte, pkgLen)
+				copy(pkg, currBuffer[0:pkgLen])
 				currBuffer = currBuffer[pkgLen:]
 				go c.tc.cp.Recv(pkg)
 				if len(currBuffer) > 0 {
@@ -180,8 +182,9 @@ func (c *connection) reConnect() (err error) {
 		}
 		c.idleTime = time.Now()
 		c.isClosed = false
-		go c.recv(c.conn)
-		go c.send(c.conn)
+		connDone := make(chan bool, 1)
+		go c.recv(c.conn, connDone)
+		go c.send(c.conn, connDone)
 	}
 	c.connLock.Unlock()
 	return nil
